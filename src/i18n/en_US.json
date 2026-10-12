@@ -1,5 +1,7 @@
 {
   "aiFlowchart": "AI Flowchart",
+  "menuDrawio": "Generate drawio flowchart",
+  "aiMermaid": "Generate Mermaid diagram",
   "settingBaseURL": "API Base URL",
   "settingBaseURLTip": "Base URL of an OpenAI-compatible endpoint, e.g. https://api.deepseek.com/v1",
   "settingApiKey": "API Key",
@@ -11,7 +13,7 @@
   "missingApiKey": "Please configure the API Key in the plugin settings first",
   "fetchingContent": "Reading note content…",
   "fetchContentFailed": "Failed to read note content",
-  "generating": "Calling the LLM to generate the flowchart, please wait…",
+  "generating": "Calling the LLM to generate the diagram, please wait…",
   "llmRequestFailed": "LLM request failed",
   "llmResponseInvalid": "Failed to parse the LLM response",
   "xmlExtractFailed": "No valid draw.io XML found in the LLM response",
@@ -19,6 +21,9 @@
   "savingFile": "Saving .drawio file…",
   "saveFileFailed": "Failed to save the .drawio file",
   "insertSuccess": "Flowchart generated and inserted into the note",
+  "mermaidInvalid": "No valid Mermaid source found in the LLM response, aborted",
+  "insertBlockFailed": "Failed to insert the Mermaid block",
+  "mermaidInsertSuccess": "Mermaid diagram generated and inserted into the note",
   "docEmpty": "The current note is empty, nothing to convert",
   "noEditor": "Please open a note first"
 }

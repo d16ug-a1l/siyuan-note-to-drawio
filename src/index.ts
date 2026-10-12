@@ -1,6 +1,7 @@
 import {
     Plugin,
     Setting,
+    Menu,
     showMessage,
     fetchSyncPost,
     getAllEditor,
@@ -26,7 +27,7 @@ const DEFAULT_CONFIG: IDrawioAIConfig = {
     temperature: "0.2",
 };
 
-const SYSTEM_PROMPT = `你是一名流程图生成专家。请分析用户提供的笔记内容，提取其中的流程、步骤、条件判断等逻辑，输出一个 draw.io（mxGraph）格式的流程图 XML。
+const DRAWIO_SYSTEM_PROMPT = `你是一名流程图生成专家。请分析用户提供的笔记内容，提取其中的流程、步骤、条件判断等逻辑，输出一个 draw.io（mxGraph）格式的流程图 XML。
 
 严格要求：
 1. 只输出 XML 本身，不要输出任何解释文字，不要使用 markdown 代码块围栏。
@@ -86,6 +87,31 @@ const SYSTEM_PROMPT = `你是一名流程图生成专家。请分析用户提供
   </root>
 </mxGraphModel>`;
 
+const MERMAID_SYSTEM_PROMPT = `你是一名图表生成专家。请分析用户提供的笔记内容，选择最合适的 Mermaid 图表类型，输出对应的 Mermaid 代码。
+
+严格要求：
+1. 只输出 Mermaid 代码本身，不要输出任何解释文字，不要使用 markdown 代码块围栏。
+2. 默认使用 flowchart TD（自上而下的流程图）；当笔记内容明显更适合其他类型时，可改用 sequenceDiagram（时序交互）、classDiagram（类结构）、stateDiagram-v2（状态流转）、erDiagram（实体关系）、gantt（时间安排）或 mindmap（思维导图）。
+3. 节点和连线的文字标签使用笔记所使用的语言。
+4. 保持简洁，节点数量不超过 30 个。
+5. 第一行必须是图表类型声明（如 flowchart TD、sequenceDiagram 等）。
+6. 节点文本中包含特殊字符（括号、引号等）时，用双引号包裹节点文本。
+
+示例：
+用户笔记内容："用户登录流程：开始，输入用户名和密码，然后校验是否通过；如果通过则进入首页，否则提示错误并重新输入；最后结束。"
+输出：
+flowchart TD
+    A([开始]) --> B[输入用户名和密码]
+    B --> C{校验是否通过}
+    C -->|通过| D[进入首页]
+    C -->|不通过| E[提示错误并重新输入]
+    E --> B
+    D --> F([结束])`;
+
+const MERMAID_KEYWORD_PATTERN = /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|gantt|pie|mindmap|timeline|journey|gitGraph|quadrantChart|xychart-beta|block-beta)\b/;
+
+type TDiagramType = "drawio" | "mermaid";
+
 export default class NoteToDrawio extends Plugin {
     onload() {
         this.data[CONFIG_KEY] = {...DEFAULT_CONFIG};
@@ -99,22 +125,43 @@ export default class NoteToDrawio extends Plugin {
                 if (protyle.disabled) {
                     return;
                 }
-                this.generate(protyle);
+                const menu = new Menu("noteToDrawio");
+                menu.addItem({
+                    icon: "iconSparkles",
+                    label: this.t("menuDrawio"),
+                    click: () => this.generate(protyle, "drawio"),
+                });
+                menu.addItem({
+                    icon: "iconCode",
+                    label: this.t("aiMermaid"),
+                    click: () => this.generate(protyle, "mermaid"),
+                });
+                menu.open({x: event.clientX, y: event.clientY, isLeft: true});
             },
         });
 
         this.addCommand({
             langKey: "aiFlowchart",
             editorCallback: (protyle) => {
-                this.generate(protyle);
+                this.generate(protyle, "drawio");
             },
             callback: () => {
-                const editors = getAllEditor();
-                if (editors.length === 0) {
-                    showMessage(this.t("noEditor"));
-                    return;
+                const protyle = this.getFocusedProtyle();
+                if (protyle) {
+                    this.generate(protyle, "drawio");
                 }
-                this.generate(editors[0].protyle);
+            },
+        });
+        this.addCommand({
+            langKey: "aiMermaid",
+            editorCallback: (protyle) => {
+                this.generate(protyle, "mermaid");
+            },
+            callback: () => {
+                const protyle = this.getFocusedProtyle();
+                if (protyle) {
+                    this.generate(protyle, "mermaid");
+                }
             },
         });
 
@@ -194,7 +241,16 @@ export default class NoteToDrawio extends Plugin {
         return {...DEFAULT_CONFIG, ...this.data[CONFIG_KEY]};
     }
 
-    private async generate(protyle: IProtyle) {
+    private getFocusedProtyle(): IProtyle | null {
+        const editors = getAllEditor();
+        if (editors.length === 0) {
+            showMessage(this.t("noEditor"));
+            return null;
+        }
+        return editors[0].protyle;
+    }
+
+    private async generate(protyle: IProtyle, type: TDiagramType) {
         const config = this.getConfig();
         if (!config.apiKey) {
             showMessage(this.t("missingApiKey"), 6000, "error");
@@ -224,8 +280,16 @@ export default class NoteToDrawio extends Plugin {
         const hPath = (mdRes.data?.hPath || "") as string;
         const docTitle = hPath.split("/").pop() || "flowchart";
 
+        if (type === "drawio") {
+            await this.generateDrawio(protyle, config, content, docTitle);
+        } else {
+            await this.generateMermaid(protyle, config, content);
+        }
+    }
+
+    private async generateDrawio(protyle: IProtyle, config: IDrawioAIConfig, content: string, docTitle: string) {
         showMessage(this.t("generating"), 30000, "info");
-        const replyText = await this.callLLM(config, content);
+        const replyText = await this.callLLM(config, DRAWIO_SYSTEM_PROMPT, content);
         if (replyText === null) {
             return;
         }
@@ -256,7 +320,55 @@ export default class NoteToDrawio extends Plugin {
         showMessage(this.t("insertSuccess"), 6000, "info");
     }
 
-    private async callLLM(config: IDrawioAIConfig, content: string): Promise<string | null> {
+    private async generateMermaid(protyle: IProtyle, config: IDrawioAIConfig, content: string) {
+        showMessage(this.t("generating"), 30000, "info");
+        const replyText = await this.callLLM(config, MERMAID_SYSTEM_PROMPT, content);
+        if (replyText === null) {
+            return;
+        }
+
+        const source = this.extractMermaid(replyText);
+        if (!source) {
+            showMessage(this.t("mermaidInvalid"), 6000, "error");
+            return;
+        }
+
+        const params: {dataType: string, data: string, nextID: string, previousID: string, parentID: string} = {
+            dataType: "markdown",
+            data: "```mermaid\n" + source + "\n```",
+            nextID: "",
+            previousID: "",
+            parentID: "",
+        };
+        const cursorBlockID = this.getCursorBlockID(protyle);
+        if (cursorBlockID) {
+            params.previousID = cursorBlockID;
+        } else {
+            params.parentID = protyle.block.rootID;
+        }
+        const res = await fetchSyncPost("/api/block/insertBlock", params);
+        if (res.code !== 0) {
+            showMessage(`${this.t("insertBlockFailed")}: ${res.msg}`, 6000, "error");
+            return;
+        }
+        showMessage(this.t("mermaidInsertSuccess"), 6000, "info");
+    }
+
+    private getCursorBlockID(protyle: IProtyle): string | null {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) {
+            return null;
+        }
+        const node = selection.anchorNode;
+        const element = node instanceof Element ? node : node?.parentElement;
+        const blockElement = element?.closest("[data-node-id]");
+        if (!blockElement || !protyle.element?.contains(blockElement)) {
+            return null;
+        }
+        return blockElement.getAttribute("data-node-id");
+    }
+
+    private async callLLM(config: IDrawioAIConfig, systemPrompt: string, content: string): Promise<string | null> {
         const url = config.baseURL.replace(/\/+$/, "") + "/chat/completions";
         let res;
         try {
@@ -270,8 +382,8 @@ export default class NoteToDrawio extends Plugin {
                     model: config.model,
                     temperature: Number(config.temperature) || 0.2,
                     messages: [
-                        {role: "system", content: SYSTEM_PROMPT},
-                        {role: "user", content: "请根据以下笔记内容生成流程图：\n\n" + content},
+                        {role: "system", content: systemPrompt},
+                        {role: "user", content: "请根据以下笔记内容生成图表：\n\n" + content},
                     ],
                 },
                 payloadEncoding: "json",
@@ -317,6 +429,21 @@ export default class NoteToDrawio extends Plugin {
     private validateXML(xml: string): boolean {
         const doc = new DOMParser().parseFromString(xml, "text/xml");
         return !doc.querySelector("parsererror");
+    }
+
+    private extractMermaid(reply: string): string | null {
+        const source = reply.split("\n")
+            .filter((line) => !/^```/.test(line.trim()))
+            .join("\n")
+            .trim();
+        if (!source) {
+            return null;
+        }
+        const firstLine = source.split("\n").map((line) => line.trim()).find((line) => line.length > 0);
+        if (!firstLine || !MERMAID_KEYWORD_PATTERN.test(firstLine)) {
+            return null;
+        }
+        return source;
     }
 
     private newBlockID(): string {
