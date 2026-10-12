@@ -10,6 +10,7 @@ A [SiYuan Note](https://b3log.org/siyuan) plugin that converts the current note 
 ## Features
 
 - Preview-first generation dialog: pick the diagram type (drawio / Mermaid), Mermaid subtype (or let the LLM decide), insert position (at cursor / end of document), and add extra instructions before generating
+- Content scope selection: generate from the whole document or from a hand-picked set of blocks via a hierarchical checkbox tree of the current document
 - Preview the generated source before inserting — editable for Mermaid, read-only for drawio XML
 - One-click "AI Flowchart" button in the editor breadcrumb opens the dialog (two commands also open it with the type preselected, hotkeys configurable)
 - Calls any OpenAI-compatible endpoint (DeepSeek, OpenAI, Moonshot, etc.) through the SiYuan kernel forward proxy — no CORS issues
@@ -37,7 +38,7 @@ A [SiYuan Note](https://b3log.org/siyuan) plugin that converts the current note 
    - **Temperature** — default `0.2`
 2. Open a note that describes a process or workflow.
 3. Click the ✨ button in the editor breadcrumb to open the generation dialog (or run the "AI Flowchart" / "Generate Mermaid diagram" command to open it with the type preselected).
-4. In the dialog: choose the diagram type, Mermaid subtype (default auto) and insert position, optionally add extra instructions, then click **Generate**.
+4. In the dialog: choose the diagram type, Mermaid subtype (default auto) and insert position, optionally add extra instructions; expand **Content scope** to generate from selected blocks instead of the whole document, then click **Generate**.
 5. Review the preview (Mermaid source is editable), then click **Insert into note**:
    - drawio flowcharts are saved as `.drawio` files and inserted (double-click to edit in draw.io)
    - Mermaid diagrams are inserted as ` ```mermaid ` code blocks (rendered natively by SiYuan)

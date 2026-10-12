@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- New "内容范围 / Content scope" panel in the generation dialog: pick one or more blocks from the document's hierarchical block tree (checkboxes, indented by outline depth, with type badges and truncated content labels)
+- Checking a parent block auto-checks all descendants; empty selection falls back to whole-document generation
+- Selected content is collected per block via `/api/block/getBlockKramdown` (recursing through the tree), concatenated in tree order, then truncated to the usual limit
+- 全选 / 清空 toolbar and live "已选 N 个块" summary; the block list loads asynchronously and SQL failures degrade gracefully to whole-doc generation
+
 ## 0.3.0
 
 - New preview-first generation dialog: the breadcrumb button (and both commands) now open a dialog instead of inserting blindly

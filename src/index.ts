@@ -12,9 +12,11 @@ import "./index.scss";
 const CONFIG_KEY = "drawio-ai-config.json";
 const DRAWIO_ASSET_DIR = "assets/drawio";
 const MAX_CONTENT_LENGTH = 12000;
+const MAX_BLOCK_LABEL_LENGTH = 40;
 
 type TDiagramType = "drawio" | "mermaid";
 type TInsertPosition = "cursor" | "end";
+type TStage = "reading" | "readingBlocks" | "calling";
 type TMermaidSubtype = "auto" | "flowchart" | "sequenceDiagram" | "classDiagram" |
     "stateDiagram-v2" | "erDiagram" | "gantt" | "mindmap";
 
@@ -25,6 +27,15 @@ interface IDrawioAIConfig {
     temperature: string;
     defaultType: TDiagramType;
     defaultInsertPosition: TInsertPosition;
+}
+
+interface IBlockNode {
+    id: string;
+    parentID: string;
+    type: string;
+    subtype: string;
+    content: string;
+    children: IBlockNode[];
 }
 
 const DEFAULT_CONFIG: IDrawioAIConfig = {
@@ -313,6 +324,21 @@ export default class NoteToDrawio extends Plugin {
         </label>
     </div>
     <input type="text" class="b3-text-field fn__block note-to-drawio__instructions" placeholder="${this.t("instructionsPlaceholder")}">
+    <div class="note-to-drawio__scope">
+        <div class="note-to-drawio__scope-header">
+            <svg class="note-to-drawio__scope-arrow"><use xlink:href="#iconRight"></use></svg>
+            <span>${this.t("scopePanelTitle")}</span>
+            <span class="fn__space"></span>
+            <span class="note-to-drawio__scope-summary">${this.t("scopeWholeDoc")}</span>
+        </div>
+        <div class="note-to-drawio__scope-body" style="display:none">
+            <div class="note-to-drawio__scope-toolbar">
+                <button class="b3-button b3-button--outline note-to-drawio__select-all">${this.t("selectAll")}</button>
+                <button class="b3-button b3-button--outline note-to-drawio__clear">${this.t("clearSelection")}</button>
+            </div>
+            <div class="note-to-drawio__tree">${this.t("scopeLoading")}</div>
+        </div>
+    </div>
     <textarea class="b3-text-field fn__block note-to-drawio__preview" placeholder="${this.t("previewPlaceholder")}" spellcheck="false"></textarea>
     <div class="note-to-drawio__status">${this.t("statusReady")}</div>
 </div>
@@ -337,11 +363,133 @@ export default class NoteToDrawio extends Plugin {
         const regenerateButton = dialog.element.querySelector(".note-to-drawio__regenerate") as HTMLButtonElement;
         const insertButton = dialog.element.querySelector(".note-to-drawio__insert") as HTMLButtonElement;
         const cancelButton = dialog.element.querySelector(".note-to-drawio__cancel") as HTMLButtonElement;
+        const scopeHeader = dialog.element.querySelector(".note-to-drawio__scope-header") as HTMLElement;
+        const scopeBody = dialog.element.querySelector(".note-to-drawio__scope-body") as HTMLElement;
+        const scopeSummary = dialog.element.querySelector(".note-to-drawio__scope-summary") as HTMLElement;
+        const treeContainer = dialog.element.querySelector(".note-to-drawio__tree") as HTMLElement;
+        const selectAllButton = dialog.element.querySelector(".note-to-drawio__select-all") as HTMLButtonElement;
+        const clearButton = dialog.element.querySelector(".note-to-drawio__clear") as HTMLButtonElement;
 
         typeSelect.value = presetType ?? config.defaultType;
         positionSelect.value = config.defaultInsertPosition;
 
         let hasGenerated = false;
+        const selectedIds = new Set<string>();
+        const blockNodes = new Map<string, IBlockNode>();
+        const checkboxes = new Map<string, HTMLInputElement>();
+        let blockTree: IBlockNode[] = [];
+
+        scopeHeader.addEventListener("click", () => {
+            const collapsed = scopeBody.style.display === "none";
+            scopeBody.style.display = collapsed ? "" : "none";
+            scopeHeader.classList.toggle("note-to-drawio__scope-header--open", collapsed);
+        });
+
+        const updateSummary = () => {
+            scopeSummary.textContent = selectedIds.size === 0 ?
+                this.t("scopeWholeDoc") :
+                this.t("scopeSelected").replace("${count}", String(selectedIds.size));
+        };
+
+        const setNodeChecked = (node: IBlockNode, checked: boolean) => {
+            if (checked) {
+                selectedIds.add(node.id);
+            } else {
+                selectedIds.delete(node.id);
+            }
+            const checkbox = checkboxes.get(node.id);
+            if (checkbox) {
+                checkbox.checked = checked;
+            }
+            node.children.forEach((child) => setNodeChecked(child, checked));
+        };
+
+        const renderNode = (node: IBlockNode, depth: number) => {
+            const row = document.createElement("label");
+            row.className = "note-to-drawio__tree-row";
+            row.style.paddingLeft = `${depth * 16}px`;
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkboxes.set(node.id, checkbox);
+            checkbox.addEventListener("change", () => {
+                setNodeChecked(node, checkbox.checked);
+                updateSummary();
+            });
+            const badge = document.createElement("span");
+            badge.className = "note-to-drawio__badge";
+            badge.textContent = this.blockBadge(node);
+            row.append(checkbox, badge);
+            const label = this.blockLabel(node);
+            if (label) {
+                const text = document.createElement("span");
+                text.className = "note-to-drawio__tree-label";
+                text.textContent = label;
+                row.append(text);
+            }
+            treeContainer.append(row);
+            node.children.forEach((child) => renderNode(child, depth + 1));
+        };
+
+        const loadBlockTree = async () => {
+            try {
+                blockTree = await this.fetchBlockTree(protyle.block.rootID);
+                treeContainer.innerHTML = "";
+                blockNodes.clear();
+                checkboxes.clear();
+                const index = (nodes: IBlockNode[]) => {
+                    for (const node of nodes) {
+                        blockNodes.set(node.id, node);
+                        index(node.children);
+                    }
+                };
+                index(blockTree);
+                blockTree.forEach((node) => renderNode(node, 0));
+            } catch (e) {
+                treeContainer.innerHTML = "";
+                const error = document.createElement("div");
+                error.className = "note-to-drawio__tree-error";
+                error.textContent = `${this.t("scopeLoadFailed")}: ${e instanceof Error ? e.message : e}`;
+                treeContainer.append(error);
+            }
+        };
+        loadBlockTree();
+
+        selectAllButton.addEventListener("click", () => {
+            blockTree.forEach((node) => setNodeChecked(node, true));
+            updateSummary();
+        });
+        clearButton.addEventListener("click", () => {
+            blockTree.forEach((node) => setNodeChecked(node, false));
+            updateSummary();
+        });
+
+        const getTopMostSelected = (): IBlockNode[] => {
+            const hasSelectedAncestor = (node: IBlockNode): boolean => {
+                let parentID = node.parentID;
+                while (parentID) {
+                    if (selectedIds.has(parentID)) {
+                        return true;
+                    }
+                    const parent = blockNodes.get(parentID);
+                    if (!parent) {
+                        return false;
+                    }
+                    parentID = parent.parentID;
+                }
+                return false;
+            };
+            const result: IBlockNode[] = [];
+            const walk = (nodes: IBlockNode[]) => {
+                for (const node of nodes) {
+                    if (selectedIds.has(node.id) && !hasSelectedAncestor(node)) {
+                        result.push(node);
+                    }
+                    walk(node.children);
+                }
+            };
+            walk(blockTree);
+            return result;
+        };
 
         const syncTypeUI = () => {
             const isMermaid = typeSelect.value === "mermaid";
@@ -360,6 +508,11 @@ export default class NoteToDrawio extends Plugin {
             regenerateButton.disabled = busy || !hasGenerated;
             insertButton.disabled = busy || !previewArea.value.trim();
         };
+        const stageText: Record<TStage, string> = {
+            reading: this.t("statusReading"),
+            readingBlocks: this.t("statusReadingBlocks"),
+            calling: this.t("statusCalling"),
+        };
 
         const doGenerate = async () => {
             setButtons(true);
@@ -370,7 +523,8 @@ export default class NoteToDrawio extends Plugin {
                     subtypeSelect.value as TMermaidSubtype,
                     instructionsInput.value,
                     protyle,
-                    (stage) => setStatus(this.t(stage === "reading" ? "statusReading" : "statusCalling"), "working"),
+                    getTopMostSelected(),
+                    (stage) => setStatus(stageText[stage], "working"),
                 );
                 previewArea.value = source;
                 hasGenerated = true;
@@ -414,12 +568,88 @@ export default class NoteToDrawio extends Plugin {
         });
     }
 
+    private async fetchBlockTree(rootID: string): Promise<IBlockNode[]> {
+        const res = await fetchSyncPost("/api/query/sql", {
+            stmt: `SELECT id, parent_id, type, subtype, content FROM blocks WHERE root_id='${rootID}' ORDER BY sort`,
+        });
+        if (res.code !== 0) {
+            throw new Error(res.msg);
+        }
+        const rows = (res.data || []) as {
+            id: string, parent_id: string, type: string, subtype: string, content: string,
+        }[];
+        const nodes = new Map<string, IBlockNode>();
+        for (const row of rows) {
+            if (row.type === "d") {
+                continue;
+            }
+            nodes.set(row.id, {
+                id: row.id,
+                parentID: row.parent_id,
+                type: row.type,
+                subtype: row.subtype,
+                content: row.content || "",
+                children: [],
+            });
+        }
+        const roots: IBlockNode[] = [];
+        for (const node of nodes.values()) {
+            const parent = nodes.get(node.parentID);
+            if (parent) {
+                parent.children.push(node);
+            } else {
+                roots.push(node);
+            }
+        }
+        return roots;
+    }
+
+    private blockBadge(node: IBlockNode): string {
+        if (node.type === "h") {
+            return node.subtype || "h";
+        }
+        const key = "blockType_" + node.type;
+        const label = this.t(key);
+        return label === key ? node.type : label;
+    }
+
+    private blockLabel(node: IBlockNode): string {
+        const text = node.content
+            .replace(/[*_~`\\#\[\]()!|>]/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
+        if (!text) {
+            return "";
+        }
+        return text.length > MAX_BLOCK_LABEL_LENGTH ?
+            text.slice(0, MAX_BLOCK_LABEL_LENGTH) + "…" :
+            text;
+    }
+
+    private async collectSelectedContent(nodes: IBlockNode[]): Promise<string> {
+        const ordered: IBlockNode[] = [];
+        const walk = (node: IBlockNode) => {
+            ordered.push(node);
+            node.children.forEach(walk);
+        };
+        nodes.forEach(walk);
+        const parts = await Promise.all(ordered.map(async (node) => {
+            const res = await fetchSyncPost("/api/block/getBlockKramdown", {id: node.id});
+            if (res.code !== 0) {
+                throw new Error(`${this.t("fetchContentFailed")}: ${res.msg}`);
+            }
+            return ((res.data?.kramdown || "") as string).trim();
+        }));
+        return parts.filter((part) => part).join("\n\n");
+    }
+
     private async generateSource(
         type: TDiagramType,
         subtype: TMermaidSubtype,
         instructions: string,
         protyle: IProtyle,
-        onStage?: (stage: "reading" | "calling") => void,
+        selectedNodes: IBlockNode[],
+        onStage?: (stage: TStage) => void,
     ): Promise<string> {
         const config = this.getConfig();
         if (!config.apiKey) {
@@ -431,20 +661,26 @@ export default class NoteToDrawio extends Plugin {
             throw new Error(this.t("noEditor"));
         }
 
-        onStage?.("reading");
-        const mdRes = await fetchSyncPost("/api/export/exportMdContent", {id: rootID});
-        if (mdRes.code !== 0) {
-            throw new Error(`${this.t("fetchContentFailed")}: ${mdRes.msg}`);
+        let content: string;
+        if (selectedNodes.length > 0) {
+            onStage?.("readingBlocks");
+            content = await this.collectSelectedContent(selectedNodes);
+        } else {
+            onStage?.("reading");
+            const mdRes = await fetchSyncPost("/api/export/exportMdContent", {id: rootID});
+            if (mdRes.code !== 0) {
+                throw new Error(`${this.t("fetchContentFailed")}: ${mdRes.msg}`);
+            }
+            content = (mdRes.data?.content || "") as string;
+            const hPath = (mdRes.data?.hPath || "") as string;
+            this.lastDocTitle = hPath.split("/").pop() || "flowchart";
         }
-        let content = (mdRes.data?.content || "") as string;
         if (!content.trim()) {
             throw new Error(this.t("docEmpty"));
         }
         if (content.length > MAX_CONTENT_LENGTH) {
             content = content.slice(0, MAX_CONTENT_LENGTH);
         }
-        const hPath = (mdRes.data?.hPath || "") as string;
-        this.lastDocTitle = hPath.split("/").pop() || "flowchart";
 
         let systemPrompt = type === "drawio" ? DRAWIO_SYSTEM_PROMPT : MERMAID_SYSTEM_PROMPT;
         if (type === "mermaid" && subtype !== "auto") {
