@@ -1,0 +1,11 @@
+node_modules/
+dev/
+dist/
+package.zip
+refs/
+*.log
+
+# dev build outputs at repo root (copied to the workspace via npm run deploy)
+index.js
+index.css
+/i18n
