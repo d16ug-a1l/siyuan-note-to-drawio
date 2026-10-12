@@ -3,7 +3,12 @@ const path = require("path");
 
 const pluginName = require("../plugin.json").name;
 
-const workspace = process.env.SIYUAN_WORKSPACE || "/path/to/workspace";
+const workspace = process.env.SIYUAN_WORKSPACE;
+if (!workspace) {
+    console.error("[deploy] error: set the SIYUAN_WORKSPACE environment variable to your SiYuan workspace path, e.g.");
+    console.error('  SIYUAN_WORKSPACE=/path/to/workspace npm run deploy');
+    process.exit(1);
+}
 const targetDir = path.join(workspace, "data", "plugins", pluginName);
 const rootDir = path.join(__dirname, "..");
 

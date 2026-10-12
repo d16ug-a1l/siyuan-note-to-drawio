@@ -2,6 +2,9 @@
 
 [English](README.md)
 
+![version](https://img.shields.io/badge/version-0.4.0-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+
 一款[思源笔记](https://b3log.org/siyuan)插件：一键将当前笔记通过云端大模型（OpenAI 兼容的 chat completions 接口）生成为图表。支持两种输出格式：
 
 - **draw.io 流程图** —— 保存为 `.drawio` 文件到 `assets/drawio/`，并以与 [siyuan-drawio-plugin](https://github.com/zt8989/siyuan-drawio-plugin) 完全兼容的格式嵌入笔记
@@ -22,11 +25,10 @@
 ## 截图
 
 <!-- TODO: 补充截图 -->
-![screenshot](preview.png)
 
 ## 安装
 
-1. 先在集市安装并启用 **drawio 插件**（`siyuan-drawio-plugin`）——本插件依赖它来渲染和编辑图形。
+1. （可选，仅 drawio 流程图需要）先在集市安装并启用 **drawio 插件**（`siyuan-drawio-plugin`）——Mermaid 图由思源原生渲染，不依赖任何插件。
 2. 从集市安装本插件，或手动构建（见下文「开发」）后复制到 `data/plugins/siyuan-note-to-drawio/`。
 
 ## 使用
@@ -43,6 +45,12 @@
    - drawio 流程图保存为 `.drawio` 文件并插入（双击可在 draw.io 中编辑）
    - Mermaid 图以 ` ```mermaid ` 代码块形式插入（由思源原生渲染）
 
+## 隐私与安全
+
+- API Key 仅保存在本地工作空间的插件私有存储（`data/storage/petal/`）中，随工作空间同步
+- LLM 请求通过思源内核的正向代理发出，插件不连接任何其他服务器
+- 生成的 `.drawio` 文件保存在 `assets/drawio/`，与普通资源文件一致
+
 ## 开发
 
 需要 Node.js >= 24 和 npm。
@@ -53,7 +61,7 @@ npm run dev      # 开发构建（监听模式）
 npm run deploy   # 复制开发构建产物到思源工作空间
 ```
 
-`npm run deploy` 默认将 `index.js`、`index.css`、`plugin.json`、`i18n/` 和 `README*.md` 复制到 `/path/to/workspace\data\plugins\siyuan-note-to-drawio\`。可通过环境变量 `SIYUAN_WORKSPACE` 覆盖工作空间路径：
+`npm run deploy` 会将 `index.js`、`index.css`、`plugin.json`、`i18n/` 和 `README*.md` 复制到 `<工作空间>/data/plugins/siyuan-note-to-drawio/`。工作空间路径必须通过环境变量 `SIYUAN_WORKSPACE` 提供：
 
 ```bash
 SIYUAN_WORKSPACE=/path/to/workspace npm run deploy
