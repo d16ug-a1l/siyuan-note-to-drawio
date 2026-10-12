@@ -1,7 +1,7 @@
 import {
     Plugin,
     Setting,
-    Menu,
+    Dialog,
     showMessage,
     fetchSyncPost,
     getAllEditor,
@@ -13,11 +13,18 @@ const CONFIG_KEY = "drawio-ai-config.json";
 const DRAWIO_ASSET_DIR = "assets/drawio";
 const MAX_CONTENT_LENGTH = 12000;
 
+type TDiagramType = "drawio" | "mermaid";
+type TInsertPosition = "cursor" | "end";
+type TMermaidSubtype = "auto" | "flowchart" | "sequenceDiagram" | "classDiagram" |
+    "stateDiagram-v2" | "erDiagram" | "gantt" | "mindmap";
+
 interface IDrawioAIConfig {
     baseURL: string;
     apiKey: string;
     model: string;
     temperature: string;
+    defaultType: TDiagramType;
+    defaultInsertPosition: TInsertPosition;
 }
 
 const DEFAULT_CONFIG: IDrawioAIConfig = {
@@ -25,6 +32,8 @@ const DEFAULT_CONFIG: IDrawioAIConfig = {
     apiKey: "",
     model: "deepseek-chat",
     temperature: "0.2",
+    defaultType: "drawio",
+    defaultInsertPosition: "cursor",
 };
 
 const DRAWIO_SYSTEM_PROMPT = `你是一名流程图生成专家。请分析用户提供的笔记内容，提取其中的流程、步骤、条件判断等逻辑，输出一个 draw.io（mxGraph）格式的流程图 XML。
@@ -110,9 +119,13 @@ flowchart TD
 
 const MERMAID_KEYWORD_PATTERN = /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|gantt|pie|mindmap|timeline|journey|gitGraph|quadrantChart|xychart-beta|block-beta)\b/;
 
-type TDiagramType = "drawio" | "mermaid";
+const MERMAID_SUBTYPES: TMermaidSubtype[] = [
+    "auto", "flowchart", "sequenceDiagram", "classDiagram", "stateDiagram-v2", "erDiagram", "gantt", "mindmap",
+];
 
 export default class NoteToDrawio extends Plugin {
+    private lastDocTitle = "flowchart";
+
     onload() {
         this.data[CONFIG_KEY] = {...DEFAULT_CONFIG};
 
@@ -125,51 +138,42 @@ export default class NoteToDrawio extends Plugin {
                 if (protyle.disabled) {
                     return;
                 }
-                const menu = new Menu("noteToDrawio");
-                menu.addItem({
-                    icon: "iconSparkles",
-                    label: this.t("menuDrawio"),
-                    click: () => this.generate(protyle, "drawio"),
-                });
-                menu.addItem({
-                    icon: "iconCode",
-                    label: this.t("aiMermaid"),
-                    click: () => this.generate(protyle, "mermaid"),
-                });
-                menu.open({x: event.clientX, y: event.clientY, isLeft: true});
+                this.openGenerateDialog(protyle);
             },
         });
 
         this.addCommand({
             langKey: "aiFlowchart",
             editorCallback: (protyle) => {
-                this.generate(protyle, "drawio");
+                this.openGenerateDialog(protyle, "drawio");
             },
             callback: () => {
                 const protyle = this.getFocusedProtyle();
                 if (protyle) {
-                    this.generate(protyle, "drawio");
+                    this.openGenerateDialog(protyle, "drawio");
                 }
             },
         });
         this.addCommand({
             langKey: "aiMermaid",
             editorCallback: (protyle) => {
-                this.generate(protyle, "mermaid");
+                this.openGenerateDialog(protyle, "mermaid");
             },
             callback: () => {
                 const protyle = this.getFocusedProtyle();
                 if (protyle) {
-                    this.generate(protyle, "mermaid");
+                    this.openGenerateDialog(protyle, "mermaid");
                 }
             },
         });
 
-        const inputs: Record<keyof IDrawioAIConfig, HTMLInputElement> = {
+        const inputs: Record<keyof IDrawioAIConfig, HTMLInputElement | HTMLSelectElement> = {
             baseURL: null,
             apiKey: null,
             model: null,
             temperature: null,
+            defaultType: null,
+            defaultInsertPosition: null,
         };
         const createInput = (key: keyof IDrawioAIConfig, type: string) => {
             const input = document.createElement("input");
@@ -179,12 +183,25 @@ export default class NoteToDrawio extends Plugin {
             inputs[key] = input;
             return input;
         };
+        const createSelect = (key: keyof IDrawioAIConfig, options: {value: string, label: string}[]) => {
+            const select = document.createElement("select");
+            select.className = "b3-select fn__flex-center fn__size200";
+            for (const option of options) {
+                const optionElement = document.createElement("option");
+                optionElement.value = option.value;
+                optionElement.textContent = option.label;
+                select.append(optionElement);
+            }
+            select.value = this.data[CONFIG_KEY]?.[key] ?? DEFAULT_CONFIG[key];
+            inputs[key] = select;
+            return select;
+        };
         this.setting = new Setting({
             confirmCallback: () => {
                 const config = {...DEFAULT_CONFIG, ...this.data[CONFIG_KEY]};
                 for (const key of Object.keys(inputs) as (keyof IDrawioAIConfig)[]) {
                     if (inputs[key]) {
-                        config[key] = inputs[key].value.trim();
+                        config[key] = inputs[key].value.trim() as never;
                     }
                 }
                 this.saveData(CONFIG_KEY, config).catch((e) => {
@@ -211,6 +228,22 @@ export default class NoteToDrawio extends Plugin {
             title: this.t("settingTemperature"),
             description: this.t("settingTemperatureTip"),
             createActionElement: () => createInput("temperature", "text"),
+        });
+        this.setting.addItem({
+            title: this.t("settingDefaultType"),
+            description: this.t("settingDefaultTypeTip"),
+            createActionElement: () => createSelect("defaultType", [
+                {value: "drawio", label: this.t("typeDrawio")},
+                {value: "mermaid", label: this.t("typeMermaid")},
+            ]),
+        });
+        this.setting.addItem({
+            title: this.t("settingDefaultInsertPosition"),
+            description: this.t("settingDefaultInsertPositionTip"),
+            createActionElement: () => createSelect("defaultInsertPosition", [
+                {value: "cursor", label: this.t("posCursor")},
+                {value: "end", label: this.t("posEnd")},
+            ]),
         });
     }
 
@@ -250,108 +283,255 @@ export default class NoteToDrawio extends Plugin {
         return editors[0].protyle;
     }
 
-    private async generate(protyle: IProtyle, type: TDiagramType) {
+    private openGenerateDialog(protyle: IProtyle, presetType?: TDiagramType) {
+        const config = this.getConfig();
+        const subtypeOptions = MERMAID_SUBTYPES.map((subtype) => {
+            const label = subtype === "auto" ? this.t("subtypeAuto") : subtype;
+            return `<option value="${subtype}">${label}</option>`;
+        }).join("");
+        const dialog = new Dialog({
+            title: this.t("dialogTitle"),
+            content: `<div class="b3-dialog__content note-to-drawio">
+    <div class="note-to-drawio__options">
+        <label class="note-to-drawio__field">
+            <span>${this.t("optType")}</span>
+            <select class="b3-select note-to-drawio__type">
+                <option value="drawio">${this.t("typeDrawio")}</option>
+                <option value="mermaid">${this.t("typeMermaid")}</option>
+            </select>
+        </label>
+        <label class="note-to-drawio__field note-to-drawio__subtype-field">
+            <span>${this.t("optMermaidSubtype")}</span>
+            <select class="b3-select note-to-drawio__subtype">${subtypeOptions}</select>
+        </label>
+        <label class="note-to-drawio__field">
+            <span>${this.t("optPosition")}</span>
+            <select class="b3-select note-to-drawio__position">
+                <option value="cursor">${this.t("posCursor")}</option>
+                <option value="end">${this.t("posEnd")}</option>
+            </select>
+        </label>
+    </div>
+    <input type="text" class="b3-text-field fn__block note-to-drawio__instructions" placeholder="${this.t("instructionsPlaceholder")}">
+    <textarea class="b3-text-field fn__block note-to-drawio__preview" placeholder="${this.t("previewPlaceholder")}" spellcheck="false"></textarea>
+    <div class="note-to-drawio__status">${this.t("statusReady")}</div>
+</div>
+<div class="b3-dialog__action">
+    <button class="b3-button b3-button--outline note-to-drawio__generate">${this.t("btnGenerate")}</button>
+    <button class="b3-button b3-button--outline note-to-drawio__regenerate" disabled>${this.t("btnRegenerate")}</button>
+    <div class="fn__space"></div>
+    <button class="b3-button b3-button--cancel note-to-drawio__cancel">${this.t("btnCancel")}</button>
+    <button class="b3-button b3-button--text note-to-drawio__insert" disabled>${this.t("btnInsert")}</button>
+</div>`,
+            width: "720px",
+        });
+
+        const typeSelect = dialog.element.querySelector(".note-to-drawio__type") as HTMLSelectElement;
+        const subtypeField = dialog.element.querySelector(".note-to-drawio__subtype-field") as HTMLElement;
+        const subtypeSelect = dialog.element.querySelector(".note-to-drawio__subtype") as HTMLSelectElement;
+        const positionSelect = dialog.element.querySelector(".note-to-drawio__position") as HTMLSelectElement;
+        const instructionsInput = dialog.element.querySelector(".note-to-drawio__instructions") as HTMLInputElement;
+        const previewArea = dialog.element.querySelector(".note-to-drawio__preview") as HTMLTextAreaElement;
+        const statusElement = dialog.element.querySelector(".note-to-drawio__status") as HTMLElement;
+        const generateButton = dialog.element.querySelector(".note-to-drawio__generate") as HTMLButtonElement;
+        const regenerateButton = dialog.element.querySelector(".note-to-drawio__regenerate") as HTMLButtonElement;
+        const insertButton = dialog.element.querySelector(".note-to-drawio__insert") as HTMLButtonElement;
+        const cancelButton = dialog.element.querySelector(".note-to-drawio__cancel") as HTMLButtonElement;
+
+        typeSelect.value = presetType ?? config.defaultType;
+        positionSelect.value = config.defaultInsertPosition;
+
+        let hasGenerated = false;
+
+        const syncTypeUI = () => {
+            const isMermaid = typeSelect.value === "mermaid";
+            subtypeField.style.display = isMermaid ? "" : "none";
+            previewArea.readOnly = !isMermaid;
+        };
+        syncTypeUI();
+        typeSelect.addEventListener("change", syncTypeUI);
+
+        const setStatus = (text: string, state: "idle" | "working" | "success" | "error") => {
+            statusElement.textContent = text;
+            statusElement.className = `note-to-drawio__status note-to-drawio__status--${state}`;
+        };
+        const setButtons = (busy: boolean) => {
+            generateButton.disabled = busy;
+            regenerateButton.disabled = busy || !hasGenerated;
+            insertButton.disabled = busy || !previewArea.value.trim();
+        };
+
+        const doGenerate = async () => {
+            setButtons(true);
+            const startTime = Date.now();
+            try {
+                const source = await this.generateSource(
+                    typeSelect.value as TDiagramType,
+                    subtypeSelect.value as TMermaidSubtype,
+                    instructionsInput.value,
+                    protyle,
+                    (stage) => setStatus(this.t(stage === "reading" ? "statusReading" : "statusCalling"), "working"),
+                );
+                previewArea.value = source;
+                hasGenerated = true;
+                const seconds = ((Date.now() - startTime) / 1000).toFixed(1);
+                setStatus(this.t("statusDone").replace("${seconds}", seconds), "success");
+            } catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                setStatus(this.t("statusFailed").replace("${error}", message), "error");
+                showMessage(message, 6000, "error");
+            } finally {
+                setButtons(false);
+            }
+        };
+
+        generateButton.addEventListener("click", doGenerate);
+        regenerateButton.addEventListener("click", doGenerate);
+        cancelButton.addEventListener("click", () => dialog.destroy());
+        insertButton.addEventListener("click", async () => {
+            setButtons(true);
+            try {
+                const type = typeSelect.value as TDiagramType;
+                await this.insertDiagram(
+                    type,
+                    previewArea.value,
+                    positionSelect.value as TInsertPosition,
+                    protyle,
+                );
+                dialog.destroy();
+                showMessage(type === "drawio" ? this.t("insertSuccess") : this.t("mermaidInsertSuccess"), 6000, "info");
+            } catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                setStatus(this.t("statusFailed").replace("${error}", message), "error");
+                showMessage(message, 6000, "error");
+                setButtons(false);
+            }
+        });
+        dialog.bindInput(instructionsInput, () => {
+            if (!generateButton.disabled) {
+                doGenerate();
+            }
+        });
+    }
+
+    private async generateSource(
+        type: TDiagramType,
+        subtype: TMermaidSubtype,
+        instructions: string,
+        protyle: IProtyle,
+        onStage?: (stage: "reading" | "calling") => void,
+    ): Promise<string> {
         const config = this.getConfig();
         if (!config.apiKey) {
-            showMessage(this.t("missingApiKey"), 6000, "error");
             this.openSetting();
-            return;
+            throw new Error(this.t("missingApiKey"));
         }
         const rootID = protyle.block.rootID;
         if (!rootID) {
-            showMessage(this.t("noEditor"), 6000, "error");
-            return;
+            throw new Error(this.t("noEditor"));
         }
 
-        showMessage(this.t("fetchingContent"), 3000, "info");
+        onStage?.("reading");
         const mdRes = await fetchSyncPost("/api/export/exportMdContent", {id: rootID});
         if (mdRes.code !== 0) {
-            showMessage(`${this.t("fetchContentFailed")}: ${mdRes.msg}`, 6000, "error");
-            return;
+            throw new Error(`${this.t("fetchContentFailed")}: ${mdRes.msg}`);
         }
         let content = (mdRes.data?.content || "") as string;
         if (!content.trim()) {
-            showMessage(this.t("docEmpty"), 6000, "error");
-            return;
+            throw new Error(this.t("docEmpty"));
         }
         if (content.length > MAX_CONTENT_LENGTH) {
             content = content.slice(0, MAX_CONTENT_LENGTH);
         }
         const hPath = (mdRes.data?.hPath || "") as string;
-        const docTitle = hPath.split("/").pop() || "flowchart";
+        this.lastDocTitle = hPath.split("/").pop() || "flowchart";
 
+        let systemPrompt = type === "drawio" ? DRAWIO_SYSTEM_PROMPT : MERMAID_SYSTEM_PROMPT;
+        if (type === "mermaid" && subtype !== "auto") {
+            systemPrompt += `\n\n注意：本次必须输出 ${subtype} 类型的图表，第一行必须是以 "${subtype}" 开头的类型声明，不要使用其他类型。`;
+        }
+        let userContent = "请根据以下笔记内容生成图表：\n\n" + content;
+        if (instructions.trim()) {
+            userContent += "\n\n补充要求：" + instructions.trim();
+        }
+
+        onStage?.("calling");
+        const reply = await this.callLLM(config, systemPrompt, userContent);
         if (type === "drawio") {
-            await this.generateDrawio(protyle, config, content, docTitle);
-        } else {
-            await this.generateMermaid(protyle, config, content);
+            const xml = this.extractXML(reply);
+            if (!xml) {
+                throw new Error(this.t("xmlExtractFailed"));
+            }
+            if (!this.validateXML(xml)) {
+                throw new Error(this.t("xmlInvalid"));
+            }
+            return xml;
         }
-    }
-
-    private async generateDrawio(protyle: IProtyle, config: IDrawioAIConfig, content: string, docTitle: string) {
-        showMessage(this.t("generating"), 30000, "info");
-        const replyText = await this.callLLM(config, DRAWIO_SYSTEM_PROMPT, content);
-        if (replyText === null) {
-            return;
-        }
-
-        const xml = this.extractXML(replyText);
-        if (!xml) {
-            showMessage(this.t("xmlExtractFailed"), 6000, "error");
-            return;
-        }
-        if (!this.validateXML(xml)) {
-            showMessage(this.t("xmlInvalid"), 6000, "error");
-            return;
-        }
-
-        showMessage(this.t("savingFile"), 3000, "info");
-        const blockID = this.newBlockID();
-        const safeTitle = docTitle.replace(/[\\/:*?"<>|$&^.]/g, "").trim() || "flowchart";
-        const filename = `${safeTitle}-${blockID}.drawio`;
-        const assetPath = `${DRAWIO_ASSET_DIR}/${filename}`;
-        const saved = await this.saveDrawioFile(assetPath, filename, xml);
-        if (!saved) {
-            return;
-        }
-
-        const html = `<iframe frameborder="0" style="width:100%;height:480px;" src="/plugins/siyuan-drawio-plugin/webapp/?tags=%7B%7D&lightbox=1&highlight=0000ff&edit=_blank&layers=1&toolbar-config=%7B%22refreshBtn%22%3A%7B%7D&title=${filename}#U${encodeURIComponent(assetPath)}"></iframe>
-{: id="${blockID}" custom-data-assets="${assetPath}" }`;
-        protyle.getInstance().insert(html, true, true);
-        showMessage(this.t("insertSuccess"), 6000, "info");
-    }
-
-    private async generateMermaid(protyle: IProtyle, config: IDrawioAIConfig, content: string) {
-        showMessage(this.t("generating"), 30000, "info");
-        const replyText = await this.callLLM(config, MERMAID_SYSTEM_PROMPT, content);
-        if (replyText === null) {
-            return;
-        }
-
-        const source = this.extractMermaid(replyText);
+        const source = this.extractMermaid(reply);
         if (!source) {
-            showMessage(this.t("mermaidInvalid"), 6000, "error");
+            throw new Error(this.t("mermaidInvalid"));
+        }
+        return source;
+    }
+
+    private async insertDiagram(
+        type: TDiagramType,
+        source: string,
+        position: TInsertPosition,
+        protyle: IProtyle,
+    ): Promise<void> {
+        if (type === "drawio") {
+            const xml = this.extractXML(source);
+            if (!xml || !this.validateXML(xml)) {
+                throw new Error(this.t("xmlInvalid"));
+            }
+            const blockID = this.newBlockID();
+            const safeTitle = this.lastDocTitle.replace(/[\\/:*?"<>|$&^.]/g, "").trim() || "flowchart";
+            const filename = `${safeTitle}-${blockID}.drawio`;
+            const assetPath = `${DRAWIO_ASSET_DIR}/${filename}`;
+            await this.saveDrawioFile(assetPath, filename, xml);
+            const html = `<iframe frameborder="0" style="width:100%;height:480px;" src="/plugins/siyuan-drawio-plugin/webapp/?tags=%7B%7D&lightbox=1&highlight=0000ff&edit=_blank&layers=1&toolbar-config=%7B%22refreshBtn%22%3A%7B%7D&title=${filename}#U${encodeURIComponent(assetPath)}"></iframe>
+{: id="${blockID}" custom-data-assets="${assetPath}" }`;
+            if (position === "cursor") {
+                protyle.getInstance().insert(html, true, true);
+            } else {
+                const res = await fetchSyncPost("/api/block/appendBlock", {
+                    dataType: "markdown",
+                    data: html,
+                    parentID: protyle.block.rootID,
+                });
+                if (res.code !== 0) {
+                    throw new Error(`${this.t("insertBlockFailed")}: ${res.msg}`);
+                }
+            }
             return;
         }
 
+        const mermaidSource = this.extractMermaid(source);
+        if (!mermaidSource) {
+            throw new Error(this.t("mermaidInvalid"));
+        }
         const params: {dataType: string, data: string, nextID: string, previousID: string, parentID: string} = {
             dataType: "markdown",
-            data: "```mermaid\n" + source + "\n```",
+            data: "```mermaid\n" + mermaidSource + "\n```",
             nextID: "",
             previousID: "",
             parentID: "",
         };
-        const cursorBlockID = this.getCursorBlockID(protyle);
-        if (cursorBlockID) {
-            params.previousID = cursorBlockID;
+        if (position === "cursor") {
+            const cursorBlockID = this.getCursorBlockID(protyle);
+            if (cursorBlockID) {
+                params.previousID = cursorBlockID;
+            } else {
+                params.parentID = protyle.block.rootID;
+            }
         } else {
             params.parentID = protyle.block.rootID;
         }
         const res = await fetchSyncPost("/api/block/insertBlock", params);
         if (res.code !== 0) {
-            showMessage(`${this.t("insertBlockFailed")}: ${res.msg}`, 6000, "error");
-            return;
+            throw new Error(`${this.t("insertBlockFailed")}: ${res.msg}`);
         }
-        showMessage(this.t("mermaidInsertSuccess"), 6000, "info");
     }
 
     private getCursorBlockID(protyle: IProtyle): string | null {
@@ -368,7 +548,7 @@ export default class NoteToDrawio extends Plugin {
         return blockElement.getAttribute("data-node-id");
     }
 
-    private async callLLM(config: IDrawioAIConfig, systemPrompt: string, content: string): Promise<string | null> {
+    private async callLLM(config: IDrawioAIConfig, systemPrompt: string, userContent: string): Promise<string> {
         const url = config.baseURL.replace(/\/+$/, "") + "/chat/completions";
         let res;
         try {
@@ -383,34 +563,30 @@ export default class NoteToDrawio extends Plugin {
                     temperature: Number(config.temperature) || 0.2,
                     messages: [
                         {role: "system", content: systemPrompt},
-                        {role: "user", content: "请根据以下笔记内容生成图表：\n\n" + content},
+                        {role: "user", content: userContent},
                     ],
                 },
                 payloadEncoding: "json",
                 responseEncoding: "text",
             });
         } catch (e) {
-            showMessage(`${this.t("llmRequestFailed")}: ${e}`, 6000, "error");
-            return null;
+            throw new Error(`${this.t("llmRequestFailed")}: ${e}`);
         }
         if (res.code !== 0) {
-            showMessage(`${this.t("llmRequestFailed")}: ${res.msg}`, 6000, "error");
-            return null;
+            throw new Error(`${this.t("llmRequestFailed")}: ${res.msg}`);
         }
         let body: any = res.data?.body;
         if (typeof body === "string") {
             try {
                 body = JSON.parse(body);
             } catch (e) {
-                showMessage(`${this.t("llmResponseInvalid")}: ${e}`, 6000, "error");
-                return null;
+                throw new Error(`${this.t("llmResponseInvalid")}: ${e}`);
             }
         }
         const text = body?.choices?.[0]?.message?.content;
         if (typeof text !== "string" || !text.trim()) {
             const detail = typeof body === "object" ? JSON.stringify(body).slice(0, 200) : String(body);
-            showMessage(`${this.t("llmResponseInvalid")}: ${detail}`, 6000, "error");
-            return null;
+            throw new Error(`${this.t("llmResponseInvalid")}: ${detail}`);
         }
         return text;
     }
@@ -458,7 +634,7 @@ export default class NoteToDrawio extends Plugin {
         return `${stamp}-${rand}`;
     }
 
-    private async saveDrawioFile(assetPath: string, filename: string, xml: string): Promise<boolean> {
+    private async saveDrawioFile(assetPath: string, filename: string, xml: string): Promise<void> {
         const formData = new FormData();
         formData.append("path", `/data/${assetPath}`);
         formData.append("isDir", "false");
@@ -467,9 +643,7 @@ export default class NoteToDrawio extends Plugin {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const res = await fetchSyncPost("/api/file/putFile", formData as any);
         if (res.code !== 0) {
-            showMessage(`${this.t("saveFileFailed")}: ${res.msg}`, 6000, "error");
-            return false;
+            throw new Error(`${this.t("saveFileFailed")}: ${res.msg}`);
         }
-        return true;
     }
 }

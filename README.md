@@ -9,11 +9,13 @@ A [SiYuan Note](https://b3log.org/siyuan) plugin that converts the current note 
 
 ## Features
 
-- One-click "AI Flowchart" button in the editor breadcrumb opens a menu: generate a drawio flowchart or a Mermaid diagram (both also available as commands with configurable hotkeys)
+- Preview-first generation dialog: pick the diagram type (drawio / Mermaid), Mermaid subtype (or let the LLM decide), insert position (at cursor / end of document), and add extra instructions before generating
+- Preview the generated source before inserting — editable for Mermaid, read-only for drawio XML
+- One-click "AI Flowchart" button in the editor breadcrumb opens the dialog (two commands also open it with the type preselected, hotkeys configurable)
 - Calls any OpenAI-compatible endpoint (DeepSeek, OpenAI, Moonshot, etc.) through the SiYuan kernel forward proxy — no CORS issues
 - Saves the generated diagram as `<title>-<timestamp>-<random>.drawio` in `assets/drawio/`
 - Inserts a drawio-plugin-compatible iframe block at the cursor position — double-click to edit the diagram in draw.io
-- Configurable `baseURL` / `apiKey` / `model` / `temperature` in the plugin settings
+- Configurable `baseURL` / `apiKey` / `model` / `temperature` / default type & insert position in the plugin settings
 - Chinese and English UI
 
 ## Screenshot
@@ -34,10 +36,11 @@ A [SiYuan Note](https://b3log.org/siyuan) plugin that converts the current note 
    - **Model** — e.g. `deepseek-chat`
    - **Temperature** — default `0.2`
 2. Open a note that describes a process or workflow.
-3. Click the ✨ button in the editor breadcrumb and choose **Generate drawio flowchart** or **Generate Mermaid diagram** (or run the corresponding command).
-4. Wait a few seconds:
-   - drawio flowcharts are saved as `.drawio` files and inserted at the cursor position (double-click to edit in draw.io)
-   - Mermaid diagrams are inserted as ` ```mermaid ` code blocks after the cursor block (rendered natively by SiYuan)
+3. Click the ✨ button in the editor breadcrumb to open the generation dialog (or run the "AI Flowchart" / "Generate Mermaid diagram" command to open it with the type preselected).
+4. In the dialog: choose the diagram type, Mermaid subtype (default auto) and insert position, optionally add extra instructions, then click **Generate**.
+5. Review the preview (Mermaid source is editable), then click **Insert into note**:
+   - drawio flowcharts are saved as `.drawio` files and inserted (double-click to edit in draw.io)
+   - Mermaid diagrams are inserted as ` ```mermaid ` code blocks (rendered natively by SiYuan)
 
 ## Development
 
@@ -65,7 +68,6 @@ npm run build
 
 ## Roadmap
 
-- Custom prompt templates
 - More drawio diagram types (mind map, sequence diagram, ER diagram)
 - Regenerate / refine an existing flowchart block
 - Streaming generation progress

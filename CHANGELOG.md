@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- New preview-first generation dialog: the breadcrumb button (and both commands) now open a dialog instead of inserting blindly
+- Dialog options: diagram type (drawio / Mermaid), Mermaid subtype (auto / flowchart / sequenceDiagram / classDiagram / stateDiagram-v2 / erDiagram / gantt / mindmap), insert position (at cursor / end of document), plus an extra-instructions input appended to the LLM prompt
+- Preview area shows the validated source before inserting — editable for Mermaid, read-only for drawio XML
+- Status bar shows the current stage (reading note / calling LLM / done with elapsed time / failure detail)
+- Generate / Regenerate / Insert / Cancel buttons; insert re-validates the (possibly edited) preview content
+- drawio diagrams can now also be appended to the document end via `/api/block/appendBlock`
+- New settings: default diagram type and default insert position
+
 ## 0.2.0
 
 - New: generate **Mermaid diagrams** from the current note via the same LLM — the breadcrumb button now opens a menu with "生成 drawio 流程图" / "生成 Mermaid 图"

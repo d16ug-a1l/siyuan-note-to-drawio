@@ -1,5 +1,45 @@
-.note-to-drawio__settings-group {
-    .b3-label {
-        border-bottom: none;
+.note-to-drawio {
+    .note-to-drawio__options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 8px;
+    }
+
+    .note-to-drawio__field {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--b3-theme-on-surface-light, #808080);
+    }
+
+    .note-to-drawio__instructions {
+        margin-bottom: 8px;
+    }
+
+    .note-to-drawio__preview {
+        height: 260px;
+        resize: vertical;
+        font-family: var(--b3-font-family-code, monospace);
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre;
+    }
+
+    .note-to-drawio__status {
+        margin-top: 8px;
+        min-height: 18px;
+        font-size: 12px;
+        color: var(--b3-theme-on-surface-light, #808080);
+        word-break: break-all;
+    }
+
+    .note-to-drawio__status--success {
+        color: var(--b3-theme-primary, #4285f4);
+    }
+
+    .note-to-drawio__status--error {
+        color: var(--b3-theme-error, #d23f31);
     }
 }
